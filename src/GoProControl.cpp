@@ -232,14 +232,7 @@ uint8_t GoProControl::wifiOn()
 
 uint8_t GoProControl::turnOn()
 {
-    if (!checkConnection()) // not connected
-    {
-        if (_debug)
-        {
-            _debug_port->println("Connect the camera first");
-        }
-        return false;
-    }
+   
 
     if (_camera == HERO3)
     {
@@ -303,7 +296,7 @@ uint8_t GoProControl::turnOff(const bool force)
         }
         _request = "/gp/gpControl/command/system/sleep";
     }
-
+    _connected = false;
     return sendHTTPRequest(_request);
 }
 
@@ -1371,7 +1364,6 @@ void GoProControl::sendWoL()
     _udp_client.beginPacket(addr, _udp_port);
 
     _udp_client.write(preamble, LEN(preamble));
-
     for (uint8_t i = 0; i < 16; i++)
     {
         _udp_client.write(_gopro_mac, LEN(_gopro_mac));
@@ -1636,9 +1628,11 @@ void GoProControl::printMacAddress(const uint8_t mac[])
 
 void GoProControl::getBSSID()
 {
+    
 #if defined(ARDUINO_ARCH_ESP32) // ESP32 is not compliant with the arduino API
     _gopro_mac = WiFi.BSSID();
 #else
     WiFi.BSSID(_gopro_mac);
 #endif
+printMacAddress(_gopro_mac);
 }
