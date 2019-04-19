@@ -1357,6 +1357,7 @@ void GoProControl::printStatus()
 
 void GoProControl::sendWoL()
 {
+    _debug_port->println("Waking up...");
     uint8_t preamble[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     IPAddress addr(255, 255, 255, 255);
 
@@ -1364,12 +1365,15 @@ void GoProControl::sendWoL()
     _udp_client.beginPacket(addr, _udp_port);
 
     _udp_client.write(preamble, LEN(preamble));
+    printMacAddress(_gopro_mac);
     for (uint8_t i = 0; i < 16; i++)
     {
         _udp_client.write(_gopro_mac, LEN(_gopro_mac));
     }
     _udp_client.endPacket();
     _udp_client.stop();
+
+
 }
 
 uint8_t GoProControl::sendRequest(const String request)
@@ -1611,14 +1615,14 @@ char *GoProControl::splitString(char str[], uint8_t index)
 
 void GoProControl::printMacAddress(const uint8_t mac[])
 {
-    for (int8_t i = 5; i >= 0; i--)
+    for (int8_t i = 0; i <= 5; i++)
     {
         if (mac[i] < 16)
         {
             _debug_port->print("0");
         }
         _debug_port->print(mac[i], HEX);
-        if (i > 0)
+        if (i < 5)
         {
             _debug_port->print(":");
         }
