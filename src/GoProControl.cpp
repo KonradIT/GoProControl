@@ -30,17 +30,17 @@ GoProControl::GoProControl(const String ssid, const String pwd, const uint8_t ca
     _pwd = pwd;
     _camera = camera;
 
-    if (gopro_mac == NULL)
+    if (gopro_mac != NULL)
     {
-        memset(_gopro_mac, NULL, 6 * sizeof(*_gopro_mac));
+        memcpy(_gopro_mac, gopro_mac, MAC_ADDRESS_LENGTH);
     }
     else
     {
-        memcpy(_gopro_mac, gopro_mac, LEN(gopro_mac));
+        memset(_gopro_mac, NULL, MAC_ADDRESS_LENGTH); // Empty the array
     }
     _board_name = board_name;
 
-    memset(_board_mac, NULL, 6 * sizeof(*_board_mac));
+    memset(_board_mac, NULL, MAC_ADDRESS_LENGTH); // Empty the array
 }
 
 ////////////////////////////////////////////////////////////
@@ -49,7 +49,7 @@ GoProControl::GoProControl(const String ssid, const String pwd, const uint8_t ca
 
 uint8_t GoProControl::begin()
 {
-    if (checkConnection())
+    if (_connected == true)
     {
         if (_debug)
         {
@@ -109,7 +109,7 @@ uint8_t GoProControl::begin()
 
 void GoProControl::end()
 {
-    if (!checkConnection())
+    if (_connected == false)
     {
         return;
     }
@@ -122,12 +122,13 @@ void GoProControl::end()
     _wifi_client.stop();
     WiFi.disconnect();
     _connected = false;
-    memset(_gopro_mac, NULL, 6 * sizeof(*_gopro_mac));
+    _recording = false;
+    memset(_gopro_mac, NULL, MAC_ADDRESS_LENGTH);
 }
 
 uint8_t GoProControl::keepAlive()
 {
-    if (!checkConnection(true)) // camera not connected
+    if (_connected == false) // camera not connected
     {
         return false;
     }
@@ -208,7 +209,7 @@ uint8_t GoProControl::wifiOff()
     }
 
     WIFI_MODE = false;
-    sendBLERequest(BLE_WiFiOff);
+    return sendBLERequest(BLE_WiFiOff);
 }
 
 uint8_t GoProControl::wifiOn()
@@ -222,9 +223,9 @@ uint8_t GoProControl::wifiOn()
         return false;
     }
     WIFI_MODE = true;
-    sendBLERequest(BLE_WiFiOn);
+    return sendBLERequest(BLE_WiFiOn);
 }
-#endif
+#endif // BLE functions
 
 ////////////////////////////////////////////////////////////
 ////////                  Control                  /////////
@@ -232,7 +233,15 @@ uint8_t GoProControl::wifiOn()
 
 uint8_t GoProControl::turnOn()
 {
-   
+
+    if (_connected == false) // not connected
+    {
+        if (_debug)
+        {
+            _debug_port->println("Connect the camera first");
+        }
+        return false;
+    }
 
     if (_camera == HERO3)
     {
@@ -263,7 +272,7 @@ uint8_t GoProControl::turnOn()
 
 uint8_t GoProControl::turnOff(const bool force)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -300,9 +309,9 @@ uint8_t GoProControl::turnOff(const bool force)
     return sendHTTPRequest(_request);
 }
 
-uint8_t GoProControl::isOn()
+bool GoProControl::isOn()
 {
-    if (!checkConnection(true)) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -321,10 +330,17 @@ uint8_t GoProControl::isOn()
         _request = "/gp/gpControl/status";
     }
 
-    return sendHTTPRequest(_request);
+    if (sendHTTPRequest(_request) == true)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 }
 
-uint8_t GoProControl::checkConnection(const bool silent)
+bool GoProControl::isConnected(const bool silent)
 {
     if (_connected == true)
     {
@@ -344,13 +360,27 @@ uint8_t GoProControl::checkConnection(const bool silent)
     }
 }
 
+bool GoProControl::isRecording()
+{
+    if (_connected == false) // not connected
+    {
+        if (_debug)
+        {
+            _debug_port->println("Connect the camera first");
+        }
+        return false;
+    }
+
+    return _recording;
+}
+
 ////////////////////////////////////////////////////////////
 ////////                   Shoot                   /////////
 ////////////////////////////////////////////////////////////
 
 uint8_t GoProControl::shoot()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -361,7 +391,6 @@ uint8_t GoProControl::shoot()
 
     if (WIFI_MODE)
     {
-
         if (_camera == HERO3)
         {
             _request = "/bacpac/SH?t=" + _pwd + "&p=%01";
@@ -371,12 +400,12 @@ uint8_t GoProControl::shoot()
             _request = "/gp/gpControl/command/shutter?p=1";
         }
 
-        return sendHTTPRequest(_request);
+        _response = sendHTTPRequest(_request);
     }
     else // BLE
     {
 #if defined(ARDUINO_ARCH_ESP32)
-        sendBLERequest(BLE_RecordStart);
+        _response = sendBLERequest(BLE_RecordStart);
 #else
         if (_debug)
         {
@@ -385,11 +414,16 @@ uint8_t GoProControl::shoot()
         return -1;
 #endif
     }
+    if (_response == true && _mode >= VIDEO_MODE && _mode <= VIDEO_TIMEWARP_MODE)
+    {
+        _recording = true;
+    }
+    return _response;
 }
 
 uint8_t GoProControl::stopShoot()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -400,7 +434,6 @@ uint8_t GoProControl::stopShoot()
 
     if (WIFI_MODE)
     {
-
         if (_camera == HERO3)
         {
             _request = "/bacpac/SH?t=" + _pwd + "&p=%00";
@@ -410,12 +443,12 @@ uint8_t GoProControl::stopShoot()
             _request = "/gp/gpControl/command/shutter?p=0";
         }
 
-        return sendHTTPRequest(_request);
+        _response = sendHTTPRequest(_request);
     }
     else // BLE
     {
 #if defined(ARDUINO_ARCH_ESP32)
-        sendBLERequest(BLE_RecordStop);
+        _response = sendBLERequest(BLE_RecordStop);
 #else
         if (_debug)
         {
@@ -424,6 +457,11 @@ uint8_t GoProControl::stopShoot()
         return -1;
 #endif
     }
+    if (_response == true)
+    {
+        _recording = false;
+    }
+    return _response;
 }
 
 ////////////////////////////////////////////////////////////
@@ -432,7 +470,7 @@ uint8_t GoProControl::stopShoot()
 
 uint8_t GoProControl::setMode(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -481,63 +519,57 @@ uint8_t GoProControl::setMode(const uint8_t option)
             _parameter2 = "";
             switch (option)
             {
-              case VIDEO_MODE:
-                  _parameter = "0";
-                  break;
-              case VIDEO_SUB_MODE:
-                  _parameter = "0";
-                  _parameter2 = "0";
-                  break;
-              case VIDEO_TIMELAPSE_MODE:
-                  _parameter = "0";
-                  _parameter2 = "1";
-                  break;
-              case VIDEO_PHOTO_MODE:
-                  // not supported by HERO6 and above
-                  _parameter = "0";
-                  _parameter2 = "2";
-                  break;
-              case VIDEO_LOOPING_MODE:
-                  // HERO7_BLACK and presumably above
-                  _parameter = "0";
-                  _parameter2 = "3";
-                  break;
-              case VIDEO_TIMEWARP_MODE:
-                  // HERO7_BLACK and presumably above
-                  _parameter = "0";
-                  _parameter2 = "4";
-                  break;
+            case VIDEO_MODE:
+                _parameter = "0";
+                break;
+            case VIDEO_SUB_MODE:
+                _parameter = "0";
+                _parameter2 = "0";
+                break;
+            case VIDEO_TIMELAPSE_MODE:
+                _parameter = "0";
+                _parameter2 = "1";
+                break;
+            case VIDEO_PHOTO_MODE:
+                _parameter = "0";
+                _parameter2 = "2";
+                break;
+            case VIDEO_LOOPING_MODE:
+                _parameter = "0";
+                _parameter2 = "3";
+                break;
+            case VIDEO_TIMEWARP_MODE:
+                _parameter = "0";
+                _parameter2 = "4";
+                break;
 
-              case PHOTO_MODE:
-                  _parameter = "1";
-                  break;
-              case PHOTO_SINGLE_MODE:
-                  _parameter = "1";
-                  _parameter2 = "1";
-                  break;
-              case PHOTO_NIGHT_MODE:
-                  // HERO7_BLACK and presumably above
-                  _parameter = "1";
-                  _parameter2 = "2";
-                  break;
+            case PHOTO_MODE:
+                _parameter = "1";
+                break;
+            case PHOTO_SINGLE_MODE:
+                _parameter = "1";
+                _parameter2 = "1";
+                break;
+            case PHOTO_NIGHT_MODE:
+                _parameter = "1";
+                _parameter2 = "2";
+                break;
 
-              case MULTISHOT_MODE:
-                  _parameter = "2";
-                  break;
-              case MULTISHOT_BURST_MODE:
-                  _parameter = "2";
-                  _parameter2 = "0";
-                  break;
-              case MULTISHOT_TIMELAPSE_MODE:
-                  // HERO7_BLACK and presumably above
-                  _parameter = "2";
-                  _parameter2 = "1";
-                  break;
-              case MULTISHOT_NIGHTLAPSE_MODE:
-                  // HERO7_BLACK and presumably above
-                  _parameter = "2";
-                  _parameter2 = "2";
-                  break;
+            case MULTISHOT_MODE:
+                _parameter = "2";
+                break;
+            case MULTISHOT_BURST_MODE:
+                _parameter = "2";
+                _parameter2 = "0";
+                break;
+            case MULTISHOT_TIMELAPSE_MODE:
+                _parameter = "2";
+                _parameter2 = "1";
+                break;
+            case MULTISHOT_NIGHTLAPSE_MODE:
+                _parameter = "2";
+                _parameter2 = "2";
+                break;
 
             default:
                 if (_debug)
@@ -547,7 +579,7 @@ uint8_t GoProControl::setMode(const uint8_t option)
                 return -1;
             }
 
-            if ( _parameter2 == "" )
+            if (_parameter2 == "")
             {
                 _request = "/gp/gpControl/command/mode?p=" + _parameter;
             }
@@ -556,8 +588,8 @@ uint8_t GoProControl::setMode(const uint8_t option)
                 _request = "/gp/gpControl/command/sub_mode?mode=" + _parameter + "&sub_mode=" + _parameter2;
             }
         }
-
-        return sendHTTPRequest(_request);
+        _mode = option;
+        _response = sendHTTPRequest(_request);
     }
     else // BLE
     {
@@ -565,13 +597,13 @@ uint8_t GoProControl::setMode(const uint8_t option)
         switch (option)
         {
         case VIDEO_MODE:
-            sendBLERequest(BLE_ModeVideo);
+            _response = sendBLERequest(BLE_ModeVideo);
             break;
         case PHOTO_MODE:
-            sendBLERequest(BLE_ModePhoto);
+            _response = sendBLERequest(BLE_ModePhoto);
             break;
         case MULTISHOT_MODE:
-            sendBLERequest(BLE_ModeMultiShot);
+            _response = sendBLERequest(BLE_ModeMultiShot);
             break;
         default:
             if (_debug)
@@ -588,11 +620,12 @@ uint8_t GoProControl::setMode(const uint8_t option)
         return -1;
 #endif
     }
+    return _response;
 }
 
 uint8_t GoProControl::setOrientation(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -654,7 +687,7 @@ uint8_t GoProControl::setOrientation(const uint8_t option)
 
 uint8_t GoProControl::setVideoResolution(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -739,7 +772,7 @@ uint8_t GoProControl::setVideoResolution(const uint8_t option)
 
 uint8_t GoProControl::setVideoFov(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -803,7 +836,7 @@ uint8_t GoProControl::setVideoFov(const uint8_t option)
 
 uint8_t GoProControl::setFrameRate(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -912,7 +945,7 @@ uint8_t GoProControl::setFrameRate(const uint8_t option)
 
 uint8_t GoProControl::setVideoEncoding(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -971,7 +1004,7 @@ uint8_t GoProControl::setVideoEncoding(const uint8_t option)
 
 uint8_t GoProControl::setPhotoResolution(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1044,7 +1077,7 @@ uint8_t GoProControl::setPhotoResolution(const uint8_t option)
 
 uint8_t GoProControl::setTimeLapseInterval(float option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1139,7 +1172,7 @@ uint8_t GoProControl::setTimeLapseInterval(float option)
 
 uint8_t GoProControl::setContinuousShot(const uint8_t option)
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1203,7 +1236,7 @@ uint8_t GoProControl::setContinuousShot(const uint8_t option)
 
 uint8_t GoProControl::localizationOn()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1226,7 +1259,7 @@ uint8_t GoProControl::localizationOn()
 
 uint8_t GoProControl::localizationOff()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1249,7 +1282,7 @@ uint8_t GoProControl::localizationOff()
 
 uint8_t GoProControl::deleteLast()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1272,7 +1305,7 @@ uint8_t GoProControl::deleteLast()
 
 uint8_t GoProControl::deleteAll()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1330,7 +1363,10 @@ void GoProControl::printStatus()
         {
             if (_board_mac[0] == 0)
             {
-                WiFi.macAddress(_board_mac); //esp32 ok esp8266 s
+                WiFi.macAddress(_board_mac);
+#if not defined(INVERT_MAC) // Invert the mac in arduino boards
+                revert(_board_mac);
+#endif
             }
             _debug_port->print("Board MAC:\t");
             printMacAddress(_board_mac);
@@ -1368,7 +1404,7 @@ void GoProControl::sendWoL()
     printMacAddress(_gopro_mac);
     for (uint8_t i = 0; i < 16; i++)
     {
-        _udp_client.write(_gopro_mac, LEN(_gopro_mac));
+        _udp_client.write(_gopro_mac, MAC_ADDRESS_LENGTH);
     }
     _udp_client.endPacket();
     _udp_client.stop();
@@ -1391,7 +1427,7 @@ uint8_t GoProControl::sendRequest(const String request)
     _wifi_client.stop();
 }
 
-uint8_t GoProControl::sendHTTPRequest(const String request)
+uint16_t GoProControl::sendHTTPRequest(const String request)
 {
     if (!connectClient())
     {
@@ -1454,7 +1490,7 @@ uint8_t GoProControl::sendHTTPRequest(const String request)
             _debug_port->println("Command: Other error");
         }
     }
-    return -1;
+    return -(response);
 }
 
 #if defined(ARDUINO_ARCH_ESP32)
@@ -1495,7 +1531,7 @@ uint8_t GoProControl::connectClient()
 
 uint8_t GoProControl::confirmPairing()
 {
-    if (!checkConnection()) // not connected
+    if (_connected == false) // not connected
     {
         if (_debug)
         {
@@ -1615,7 +1651,8 @@ char *GoProControl::splitString(char str[], uint8_t index)
 
 void GoProControl::printMacAddress(const uint8_t mac[])
 {
-    for (int8_t i = 0; i <= 5; i++)
+
+    for (uint8_t i = 0; i <= 5; i++)
     {
         if (mac[i] < 16)
         {
@@ -1632,11 +1669,26 @@ void GoProControl::printMacAddress(const uint8_t mac[])
 
 void GoProControl::getBSSID()
 {
-    
-#if defined(ARDUINO_ARCH_ESP32) // ESP32 is not compliant with the arduino API
+#if defined(ARDUINO_ARCH_ESP32)
+    // ESP32 is not compliant with the arduino API
+    // Technically also ESP8266 but anyway we don't need to call this function in that board
     _gopro_mac = WiFi.BSSID();
 #else
     WiFi.BSSID(_gopro_mac);
 #endif
-printMacAddress(_gopro_mac);
+
+#if not defined(INVERT_MAC) // Invert the mac in arduino boards
+    revert(_gopro_mac);
+#endif
+}
+
+void GoProControl::revert(uint8_t mac[])
+{
+    uint8_t temp[MAC_ADDRESS_LENGTH];
+    for (uint8_t i = 0; i < MAC_ADDRESS_LENGTH / 2; i++)
+    {
+        temp[i] = mac[i];
+        mac[i] = mac[MAC_ADDRESS_LENGTH - i - 1];
+        mac[MAC_ADDRESS_LENGTH - i - 1] = temp[i];
+    }
 }
